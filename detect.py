@@ -1,3 +1,4 @@
+import yaml
 import argparse
 import json
 from pathlib import Path
@@ -10,6 +11,12 @@ from torchvision.models.detection import (
     fasterrcnn_resnet50_fpn,
     FasterRCNN_ResNet50_FPN_Weights,
 )
+
+
+def load_config(path="config.yaml"):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
 
 # YOLO class index -> official COCO category ID
 COCO80_TO_COCO91 = [
@@ -117,9 +124,23 @@ def get_image_id(path):
         )
 
 
-def run_yolo(images_dir, output_file):
+def run_yolo(images_dir, output_file, config):
     model = YOLO("yolo11n.pt")
 
+    conf = config["inference"]["confidence_threshold"]
+    max_det = config["inference"]["max_detections"]
+
+    model_cfg = config["models"]["yolo11"]
+
+    model = YOLO(model_cfg["checkpoint"])
+
+    results = model.predict(
+        source=images_dir,
+        imgsz=model_cfg["input_size"],
+        conf=conf,
+        max_det=max_det,
+        verbose=True,
+    )
     results = model.predict(
         source=images_dir, imgsz=640, conf=0.01, max_det=300, verbose=True
     )
@@ -160,7 +181,18 @@ def run_yolo(images_dir, output_file):
     print(f"Saved {len(coco_results)} detections to {output_file}")
 
 
-def run_fasterrcnn(images_dir, output_file):
+def run_fasterrcnn(images_dir, output_file, config):
+
+    conf = config["inference"]["confidence_threshold"]
+    max_det = config["inference"]["max_detections"]
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+
+    model = fasterrcnn_resnet50_fpn(
+        weights=weights, box_score_thresh=conf, box_detections_per_img=max_det
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -239,7 +271,22 @@ def run_fasterrcnn(images_dir, output_file):
     print(f"Saved {len(coco_results)} detections to {output_file}")
 
 
-def run_rtdetr(images_dir, output_file):
+def run_rtdetr(images_dir, output_file, config):
+
+    conf = config["inference"]["confidence_threshold"]
+    max_det = config["inference"]["max_detections"]
+
+    model_cfg = config["models"]["rtdetr"]
+
+    model = YOLO(model_cfg["checkpoint"])
+
+    results = model.predict(
+        source=images_dir,
+        imgsz=model_cfg["input_size"],
+        conf=conf,
+        max_det=max_det,
+        verbose=True,
+    )
 
     model = YOLO("rtdetr-l.pt")
 
@@ -281,7 +328,7 @@ def run_rtdetr(images_dir, output_file):
 
 
 def main():
-
+    config = load_config()
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -295,13 +342,13 @@ def main():
     args = parser.parse_args()
 
     if args.model == "yolo11":
-        run_yolo(args.images, args.out)
+        run_yolo(args.images, args.out, config)
 
     elif args.model == "fasterrcnn":
-        run_fasterrcnn(args.images, args.out)
+        run_fasterrcnn(args.images, args.out, config)
 
     elif args.model == "rtdetr":
-        run_rtdetr(args.images, args.out)
+        run_rtdetr(args.images, args.out, config)
 
 
 if __name__ == "__main__":

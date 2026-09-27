@@ -1,0 +1,17 @@
+inference:
+  confidence_threshold: 0.01
+  max_detections: 300
+
+models:
+  yolo11:
+    checkpoint: yolo11n.pt
+    input_size: 640
+
+  fasterrcnn:
+    checkpoint: fasterrcnn_resnet50_fpn
+    min_size: 800
+    max_size: 1333
+
+  rtdetr:
+    checkpoint: rtdetr-l.pt
+    input_size: 640

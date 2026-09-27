@@ -1,0 +1,21 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded datasets and archives
+val2017/
+test_images/
+annotations/
+*.zip
+
+# Downloaded model weights
+*.pt
+*.pth
+
+# Generated inference output
+runs/
+*_val2017.json
+resume_test*.json
+
