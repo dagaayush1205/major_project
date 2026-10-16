@@ -15,3 +15,8 @@ models:
   rtdetr:
     checkpoint: rtdetr-l.pt
     input_size: 640
+
+degradations:
+  types:
+    - low_light
+  severities: [1, 2, 3, 4, 5]

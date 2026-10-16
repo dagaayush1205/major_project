@@ -3,14 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ultralytics import YOLO
-import torch
 from PIL import Image
-from torchvision.transforms.functional import pil_to_tensor
-from torchvision.models.detection import (
-    fasterrcnn_resnet50_fpn,
-    FasterRCNN_ResNet50_FPN_Weights,
-)
 
 
 def load_config(path="config.yaml"):
@@ -125,24 +118,25 @@ def get_image_id(path):
 
 
 def run_yolo(images_dir, output_file, config):
-    model = YOLO("yolo11n.pt")
+    try:
+        from ultralytics import YOLO
+    except ImportError as e:
+        raise ImportError(
+            "ultralytics is required to run YOLO11. Install it via 'pip install ultralytics'."
+        ) from e
 
     conf = config["inference"]["confidence_threshold"]
     max_det = config["inference"]["max_detections"]
-
     model_cfg = config["models"]["yolo11"]
 
     model = YOLO(model_cfg["checkpoint"])
 
     results = model.predict(
         source=images_dir,
-        imgsz=model_cfg["input_size"],
+        imgsz=model_cfg.get("input_size", 640),
         conf=conf,
         max_det=max_det,
         verbose=True,
-    )
-    results = model.predict(
-        source=images_dir, imgsz=640, conf=0.01, max_det=300, verbose=True
     )
 
     coco_results = []
@@ -167,7 +161,7 @@ def run_yolo(images_dir, output_file, config):
 
             coco_results.append(
                 {
-                    "image_id": image_id,
+                    "image_id": int(image_id),
                     "category_id": COCO80_TO_COCO91[cls_idx],
                     "bbox": [float(x1), float(y1), float(width), float(height)],
                     "score": float(score),
@@ -182,29 +176,29 @@ def run_yolo(images_dir, output_file, config):
 
 
 def run_fasterrcnn(images_dir, output_file, config):
+    try:
+        import torch
+        from torchvision.transforms.functional import pil_to_tensor
+        from torchvision.models.detection import (
+            fasterrcnn_resnet50_fpn,
+            FasterRCNN_ResNet50_FPN_Weights,
+        )
+    except ImportError as e:
+        raise ImportError(
+            "torch and torchvision are required to run Faster R-CNN. Install them via 'pip install torch torchvision'."
+        ) from e
 
     conf = config["inference"]["confidence_threshold"]
     max_det = config["inference"]["max_detections"]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
-
-    model = fasterrcnn_resnet50_fpn(
-        weights=weights, box_score_thresh=conf, box_detections_per_img=max_det
-    )
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     print(f"Using device: {device}")
 
     weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
-
     model = fasterrcnn_resnet50_fpn(
         weights=weights,
-        # IMPORTANT: fixed experiment protocol
-        box_score_thresh=0.01,
-        box_detections_per_img=300,
+        box_score_thresh=conf,
+        box_detections_per_img=max_det,
     )
 
     model.to(device)
@@ -240,8 +234,8 @@ def run_fasterrcnn(images_dir, output_file, config):
             detection_count = 0
 
             for box, score, label in zip(boxes, scores, labels):
-                # Defensive check
-                if score < 0.01:
+                # Defensive check against threshold
+                if score < conf:
                     continue
 
                 x1, y1, x2, y2 = box
@@ -272,26 +266,25 @@ def run_fasterrcnn(images_dir, output_file, config):
 
 
 def run_rtdetr(images_dir, output_file, config):
+    try:
+        from ultralytics import YOLO
+    except ImportError as e:
+        raise ImportError(
+            "ultralytics is required to run RT-DETR. Install it via 'pip install ultralytics'."
+        ) from e
 
     conf = config["inference"]["confidence_threshold"]
     max_det = config["inference"]["max_detections"]
-
     model_cfg = config["models"]["rtdetr"]
 
     model = YOLO(model_cfg["checkpoint"])
 
     results = model.predict(
         source=images_dir,
-        imgsz=model_cfg["input_size"],
+        imgsz=model_cfg.get("input_size", 640),
         conf=conf,
         max_det=max_det,
         verbose=True,
-    )
-
-    model = YOLO("rtdetr-l.pt")
-
-    results = model.predict(
-        source=images_dir, imgsz=640, conf=0.01, max_det=300, verbose=True
     )
 
     coco_results = []
@@ -310,12 +303,14 @@ def run_rtdetr(images_dir, output_file, config):
 
         for box, score, cls_idx in zip(xyxy, scores, classes):
             x1, y1, x2, y2 = box
+            width = x2 - x1
+            height = y2 - y1
 
             coco_results.append(
                 {
                     "image_id": int(image_id),
                     "category_id": COCO80_TO_COCO91[cls_idx],
-                    "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                    "bbox": [float(x1), float(y1), float(width), float(height)],
                     "score": float(score),
                 }
             )
@@ -328,7 +323,6 @@ def run_rtdetr(images_dir, output_file, config):
 
 
 def main():
-    config = load_config()
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -339,7 +333,12 @@ def main():
 
     parser.add_argument("--out", required=True)
 
+    parser.add_argument(
+        "--config", default="config.yaml", help="Path to configuration YAML"
+    )
+
     args = parser.parse_args()
+    config = load_config(args.config)
 
     if args.model == "yolo11":
         run_yolo(args.images, args.out, config)
