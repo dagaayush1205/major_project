@@ -1,29 +1,74 @@
 """Image Degradation Module for Robustness and Error Decomposition Studies.
 
-Provides controlled, reproducible visual degradations at standardized severity levels (1 to 5).
-Each degradation preserves image dimensions, RGB channel ordering, and uint8 dynamic range [0, 255].
+Provides controlled, reproducible visual degradations at standardized severity levels (1 to 5):
+- low_light: Non-linear tone scaling (gamma) and luminance attenuation.
+- gaussian_blur: High-frequency detail loss via Gaussian spatial filtering.
+- gaussian_noise: Additive Gaussian sensor noise simulating high ISO / thermal noise.
+- fog: Atmospheric scattering attenuation (Koschmieder's model).
+- jpeg_compression: Lossy block DCT quantization artifacts.
+
+Each degradation guarantees:
+- Preservation of image dimensions (H, W, 3).
+- Preservation of RGB color channel ordering.
+- Preservation of uint8 data type and dynamic range [0, 255].
+- Non-destructive processing (original input remains unaltered).
+- Deterministic reproducibility when explicit random seed is provided.
 """
 
 from typing import Union, Optional, Tuple, Dict, Any, Callable
 from pathlib import Path
+import io
 import numpy as np
 from PIL import Image
+from scipy.ndimage import gaussian_filter
 
 
 # Severity parameters for Low Light degradation.
 # Combines gamma correction (simulating non-linear camera response and dynamic range loss)
 # with linear luminance attenuation factor (beta).
-# Severity 1: Mild dusk/shadow (gamma=1.3, beta=0.80)
-# Severity 2: Indoor dim light (gamma=1.6, beta=0.60)
-# Severity 3: Low light / street twilight (gamma=2.0, beta=0.40)
-# Severity 4: Dark night scene (gamma=2.5, beta=0.25)
-# Severity 5: Extreme low light (gamma=3.2, beta=0.12)
 LOW_LIGHT_PARAMS: Dict[int, Dict[str, float]] = {
     1: {"gamma": 1.3, "beta": 0.80},
     2: {"gamma": 1.6, "beta": 0.60},
     3: {"gamma": 2.0, "beta": 0.40},
     4: {"gamma": 2.5, "beta": 0.25},
     5: {"gamma": 3.2, "beta": 0.12},
+}
+
+# Gaussian Blur kernel standard deviations (sigma).
+GAUSSIAN_BLUR_PARAMS: Dict[int, float] = {
+    1: 1.0,
+    2: 2.0,
+    3: 3.5,
+    4: 5.0,
+    5: 7.0,
+}
+
+# Gaussian Noise standard deviation (in uint8 intensity units [0, 255]).
+GAUSSIAN_NOISE_PARAMS: Dict[int, float] = {
+    1: 8.0,
+    2: 16.0,
+    3: 28.0,
+    4: 45.0,
+    5: 70.0,
+}
+
+# Fog atmospheric transmission coefficients (t in [0, 1]).
+# Lower transmission corresponds to denser haze/fog.
+FOG_PARAMS: Dict[int, float] = {
+    1: 0.80,
+    2: 0.65,
+    3: 0.50,
+    4: 0.35,
+    5: 0.20,
+}
+
+# JPEG compression quality factors (100 = best, 1 = lowest).
+JPEG_COMPRESSION_PARAMS: Dict[int, int] = {
+    1: 60,
+    2: 40,
+    3: 25,
+    4: 15,
+    5: 7,
 }
 
 
@@ -81,18 +126,7 @@ def apply_low_light(
 ) -> Union[np.ndarray, Image.Image]:
     """
     Applies controlled low-light degradation to an RGB image.
-
-    Operational definition:
-        Non-linear gamma adjustment and linear attenuation:
-        I_out = beta * (I_in / 255.0) ** gamma * 255.0
-
-    Args:
-        image: Input RGB image as PIL Image or uint8 NumPy array (H, W, 3).
-        severity: Degradation level from 1 (mild) to 5 (extreme).
-        seed: Random seed for deterministic reproducibility if stochastic elements are present.
-
-    Returns:
-        Degraded RGB image in the same type as input (PIL Image or uint8 np.ndarray).
+    Formula: I_out = beta * (I_in / 255.0) ** gamma * 255.0
     """
     _validate_severity(severity)
     image_np, was_pil = _to_numpy_rgb(image)
@@ -101,20 +135,103 @@ def apply_low_light(
     gamma = params["gamma"]
     beta = params["beta"]
 
-    # Normalize to [0, 1] float
     norm = image_np.astype(np.float32) / 255.0
-
-    # Non-linear tone scaling
     degraded_norm = beta * np.power(norm, gamma)
-
-    # Scale back to [0, 255]
     degraded_np = degraded_norm * 255.0
 
     return _from_numpy_rgb(degraded_np, was_pil)
 
 
+def apply_gaussian_blur(
+    image: Union[np.ndarray, Image.Image],
+    severity: int = 1,
+    seed: Optional[int] = None,
+) -> Union[np.ndarray, Image.Image]:
+    """
+    Applies Gaussian blur simulating camera defocus.
+    """
+    _validate_severity(severity)
+    image_np, was_pil = _to_numpy_rgb(image)
+
+    sigma = GAUSSIAN_BLUR_PARAMS[severity]
+    # Filter spatial axes only (axis 0 and 1), preserving separate RGB channels (sigma=0 for axis 2)
+    blurred_np = gaussian_filter(image_np.astype(np.float32), sigma=(sigma, sigma, 0))
+
+    return _from_numpy_rgb(blurred_np, was_pil)
+
+
+def apply_gaussian_noise(
+    image: Union[np.ndarray, Image.Image],
+    severity: int = 1,
+    seed: Optional[int] = None,
+) -> Union[np.ndarray, Image.Image]:
+    """
+    Applies zero-mean additive Gaussian sensor noise.
+    Formula: I_out = clip(I_in + N(0, sigma^2), 0, 255)
+    """
+    _validate_severity(severity)
+    image_np, was_pil = _to_numpy_rgb(image)
+
+    sigma = GAUSSIAN_NOISE_PARAMS[severity]
+    rng = np.random.RandomState(seed)
+    noise = rng.normal(loc=0.0, scale=sigma, size=image_np.shape).astype(np.float32)
+
+    noisy_np = image_np.astype(np.float32) + noise
+
+    return _from_numpy_rgb(noisy_np, was_pil)
+
+
+def apply_fog(
+    image: Union[np.ndarray, Image.Image],
+    severity: int = 1,
+    seed: Optional[int] = None,
+) -> Union[np.ndarray, Image.Image]:
+    """
+    Applies atmospheric scattering model (Koschmieder's Law):
+    Formula: I_out = I_in * t + A * (1 - t)
+    Where t is transmission and A is atmospheric daylight airlight.
+    """
+    _validate_severity(severity)
+    image_np, was_pil = _to_numpy_rgb(image)
+
+    t = FOG_PARAMS[severity]
+    # Neutral/daylight atmospheric light vector (subtle bluish white)
+    airlight = np.array([230.0, 235.0, 240.0], dtype=np.float32)
+
+    foggy_np = image_np.astype(np.float32) * t + airlight * (1.0 - t)
+
+    return _from_numpy_rgb(foggy_np, was_pil)
+
+
+def apply_jpeg_compression(
+    image: Union[np.ndarray, Image.Image],
+    severity: int = 1,
+    seed: Optional[int] = None,
+) -> Union[np.ndarray, Image.Image]:
+    """
+    Applies lossy JPEG compression artifacts via DCT quantization.
+    """
+    _validate_severity(severity)
+    image_np, was_pil = _to_numpy_rgb(image)
+
+    quality = JPEG_COMPRESSION_PARAMS[severity]
+
+    pil_img = Image.fromarray(image_np, mode="RGB")
+    buffer = io.BytesIO()
+    pil_img.save(buffer, format="JPEG", quality=quality)
+    buffer.seek(0)
+    compressed_pil = Image.open(buffer).convert("RGB")
+    compressed_np = np.array(compressed_pil, dtype=np.uint8)
+
+    return _from_numpy_rgb(compressed_np, was_pil)
+
+
 DEGRADATION_REGISTRY: Dict[str, Callable[..., Union[np.ndarray, Image.Image]]] = {
     "low_light": apply_low_light,
+    "gaussian_blur": apply_gaussian_blur,
+    "gaussian_noise": apply_gaussian_noise,
+    "fog": apply_fog,
+    "jpeg_compression": apply_jpeg_compression,
 }
 
 AVAILABLE_DEGRADATIONS = list(DEGRADATION_REGISTRY.keys())
@@ -131,7 +248,7 @@ def apply_degradation(
 
     Args:
         image: Input RGB image (PIL Image or uint8 np.ndarray).
-        degradation_type: Registered degradation name (e.g., 'low_light').
+        degradation_type: Registered degradation name.
         severity: Integer from 1 to 5.
         seed: Optional random seed.
 
@@ -161,7 +278,7 @@ def degrade_directory(
     Args:
         input_dir: Path to directory containing source images.
         output_dir: Path to destination directory.
-        degradation_type: Degradation name (e.g. 'low_light').
+        degradation_type: Degradation name (e.g. 'low_light', 'gaussian_blur').
         severity: Severity level (1-5).
         seed: Random seed for reproducibility.
 
