@@ -11,10 +11,14 @@ Executes the full research experimental suite:
 
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
+import sys
 import argparse
 import json
 import numpy as np
 from PIL import Image
+
+# Ensure src/ package is in module search path
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from degradations import AVAILABLE_DEGRADATIONS
 from detect import load_config

@@ -74,16 +74,24 @@ $$\text{Total Ground Truth} = N_{\text{TP}} + N_{\text{Miss}}$$
 major_project/
 ├── config.yaml               # Unified model and inference hyperparameters
 ├── requirements.txt          # Pinned project dependencies
-├── detect.py                 # Multi-architecture detector runner (YOLO, Faster R-CNN, RT-DETR)
-├── evaluate.py               # Standard COCO mAP evaluation via pycocotools
-├── degradations.py           # Image degradation engine (5 types x 5 severities)
-├── error_analysis.py         # Systematic diagnostic error decomposition engine
-├── restoration.py            # Image restoration algorithms & trade-off evaluation
-├── pipeline.py               # Clean vs. degraded experiment orchestrator
-├── visualize.py              # Research figures (stacked bar charts, trajectories) & LaTeX tables
-├── prepare_sample_data.py    # Offline COCO-compliant synthetic benchmark generator
 ├── run_experiments.py        # Master research experimental suite driver
-├── run_val2017.sh            # Shell script for batch model evaluation
+├── pytest.ini                # Pytest configuration
+├── src/                      # Core research package
+│   ├── __init__.py
+│   ├── detect.py             # Multi-architecture detector runner (YOLO, Faster R-CNN, RT-DETR)
+│   ├── evaluate.py           # Standard COCO mAP evaluation via pycocotools
+│   ├── degradations.py       # Image degradation engine (5 types x 5 severities)
+│   ├── error_analysis.py     # Systematic diagnostic error decomposition engine
+│   ├── restoration.py        # Image restoration algorithms & trade-off evaluation
+│   ├── pipeline.py           # Clean vs. degraded experiment orchestrator
+│   ├── visualize.py          # Research figures (stacked bar charts, trajectories) & LaTeX tables
+│   └── prepare_sample_data.py# Offline COCO-compliant synthetic benchmark generator
+├── scripts/                  # Shell execution scripts
+│   └── run_val2017.sh
+├── results/preliminary/      # Archived preliminary detection results
+│   ├── yolo11_50.json
+│   ├── fasterrcnn_50.json
+│   └── rtdetr_50.json
 └── tests/                    # Comprehensive test suite (62 tests passing)
     ├── test_detect_utils.py
     ├── test_degradations.py

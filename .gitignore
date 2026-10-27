@@ -4,6 +4,7 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+GEMINI.md 
 
 # Downloaded datasets and archives
 val2017/
